@@ -35,10 +35,19 @@ func (o *Orchestrator) planChildren(st domain.Stack, opts PlanOptions, lwDir str
 		return 0
 	}
 	var out []Child
+	// `pnpm -s` drops the `> pkg@ver script` lifecycle banner; DOTENV_CONFIG_QUIET
+	// silences dotenv v17's promo line for lanes that load it via
+	// `import "dotenv/config"`. Together with the `quiet: true` passed in
+	// server.mts / vite.config.ts, this keeps every Node lane starting on real
+	// logs — matching the Go services' clean startup.
+	nodeEnv := func() []string {
+		return append(append([]string{}, base...),
+			"NODE_ENV=development", "DOTENV_CONFIG_QUIET=true")
+	}
 	out = append(out, Child{
 		Name: "app", Dir: lwDir, Color: palette[1],
-		Shell: "pnpm run dev:vite",
-		Env:   append(append([]string{}, base...), "NODE_ENV=development"),
+		Shell: "pnpm -s run dev:vite",
+		Env:   nodeEnv(),
 		// Hold the web (vite) until the API answers /api/health. The app proxies
 		// /api to the API (start:app), which is a bigger process and boots slower;
 		// a browser that loads the web before the API is up gets stuck in an auth
@@ -49,13 +58,13 @@ func (o *Orchestrator) planChildren(st domain.Stack, opts PlanOptions, lwDir str
 	// In-process worker mode: the app process (start:app -> start.ts) hosts the
 	// worker stack itself when WORKERS_IN_PROCESS=1, so there is no separate
 	// `workers` lane below — one Node process instead of two, saving its RAM.
-	apiEnv := append(append([]string{}, base...), "NODE_ENV=development")
+	apiEnv := nodeEnv()
 	if opts.ShouldRunWorkersInProcess {
 		apiEnv = append(apiEnv, "WORKERS_IN_PROCESS=1")
 	}
 	out = append(out, Child{
 		Name: "api", Dir: lwDir, Color: palette[3],
-		Shell: "pnpm run start:app",
+		Shell: "pnpm -s run start:app",
 		Env:   apiEnv,
 	})
 	if !opts.ShouldSkipGateway {
@@ -99,8 +108,8 @@ func (o *Orchestrator) planChildren(st domain.Stack, opts PlanOptions, lwDir str
 			// is reserved for genuine failures, so no lane label uses it —
 			// TestNoLaneIsRed pins that.
 			Name: "workers", Dir: lwDir, Color: palette[0],
-			Shell: "pnpm run start:workers",
-			Env:   append(append([]string{}, base...), "NODE_ENV=development", "START_WORKERS=true"),
+			Shell: "pnpm -s run start:workers",
+			Env:   append(nodeEnv(), "START_WORKERS=true"),
 		})
 	}
 	return out
