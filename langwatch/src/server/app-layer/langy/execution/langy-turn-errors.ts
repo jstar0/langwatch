@@ -128,21 +128,29 @@ export class LangyWorkerSpawnFailedError extends DomainError {
 }
 
 /**
- * The turn stopped reporting and no worker is alive for it — found by the
- * liveness reconcile sweep, not by the turn itself (which is, by definition, no
- * longer running to report anything). The pod died mid-turn, or the worker was
- * OOM-killed.
+ * The worker STOPPED before the turn finished, and the control plane has
+ * exhausted its own recovery for it. Two roads reach this:
  *
- * The user's message is safely on record, so this is a retry, not a loss.
+ *   - the manager observed the worker's stream die mid-reply (the opencode
+ *     subprocess crashed / was OOM-killed / the pod went away) and emitted a
+ *     `worker_stopped` error frame; or
+ *   - the liveness reconcile sweep re-dispatched the silent turn across its whole
+ *     grace budget and it still never came back, so the sweep gives up here.
+ *
+ * Either way the browser must NOT auto-retry: the server already tried, and a
+ * client re-drive only walks into the same dead worker — which is exactly the
+ * flicker (card → silent retry → card, minutes apart) this kind exists to end.
+ * It is a FINAL state with a manual "Try again". Nothing was lost — the user's
+ * message is on record — so retrying is safe, it is just the user's call to make.
  */
-export class LangyTurnStalledError extends DomainError {
-  declare readonly kind: "langy_turn_stalled";
+export class LangyWorkerStoppedError extends DomainError {
+  declare readonly kind: "langy_worker_stopped";
 
   constructor() {
-    super("langy_turn_stalled", "turn stalled with no live worker", {
+    super("langy_worker_stopped", "worker stopped before finishing the turn", {
       httpStatus: 503,
     });
-    this.name = "LangyTurnStalledError";
+    this.name = "LangyWorkerStoppedError";
   }
 }
 
@@ -189,8 +197,20 @@ export function langyAgentErrorFromFrame(frame: string): Error {
   switch (normalized) {
     case "at-capacity":
       return new LangyAgentAtCapacityError();
+    // Both spellings of the session-vanished code: the classifier historically
+    // matched the hyphenated form, but the mono-binary emits the snake_case
+    // `session_not_found` on its error frame (see app.go). Accept either.
     case "session-not-found":
+    case "session_not_found":
       return new LangyAgentSessionLostError();
+    // The worker stopped mid-turn. `worker_stopped` is the deliberate signal;
+    // `agent_error` (the stream ended with an error) and `post_error` (the worker
+    // would not accept the prompt) are the older codes for the same thing — the
+    // opencode process died or is broken — so they all map to the one final state.
+    case "worker_stopped":
+    case "agent_error":
+    case "post_error":
+      return new LangyWorkerStoppedError();
   }
   // The manager also surfaces its typed `herr` CODES on this frame, e.g.
   // `worker_spawn_failed (map[message:...])`. Match on the code prefix, not the

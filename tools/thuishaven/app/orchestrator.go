@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"go.uber.org/zap"
@@ -24,12 +25,15 @@ type Orchestrator struct {
 	obs   Observability
 	hyg   Hygiene
 	sem   Semaphore
-	log   *zap.Logger
+	// container is the colima VM the langyagent worker runs on in its container
+	// tiers (see domain.LangyTier). May be nil in tests that never launch it.
+	container ContainerRuntime
+	log       *zap.Logger
 }
 
 // New builds an Orchestrator from its injected dependencies.
-func New(cfg Config, proxy Proxy, store Store, sup Supervisor, sys System, ch ClickHouse, pg Postgres, rds Redis, obs Observability, hyg Hygiene, sem Semaphore, log *zap.Logger) *Orchestrator {
-	return &Orchestrator{cfg: cfg, proxy: proxy, store: store, sup: sup, sys: sys, ch: ch, pg: pg, rds: rds, obs: obs, hyg: hyg, sem: sem, log: log}
+func New(cfg Config, proxy Proxy, store Store, sup Supervisor, sys System, ch ClickHouse, pg Postgres, rds Redis, obs Observability, hyg Hygiene, sem Semaphore, container ContainerRuntime, log *zap.Logger) *Orchestrator {
+	return &Orchestrator{cfg: cfg, proxy: proxy, store: store, sup: sup, sys: sys, ch: ch, pg: pg, rds: rds, obs: obs, hyg: hyg, sem: sem, container: container, log: log}
 }
 
 // UpParams identify the worktree `up` runs in (resolved by the composition root).
@@ -98,6 +102,7 @@ func (o *Orchestrator) provision(ctx context.Context, p UpParams, opts PlanOptio
 		Slug: slug, WorktreeDir: p.WorktreeDir, Branch: p.Branch,
 		LauncherPID: o.sys.Getpid(), RedisDB: domain.RedisDBForSlug(slug),
 		APIPort: ports[nSvc], WorkerMetricsPort: ports[nSvc+1], LocalAPIKey: o.cfg.LocalAPIKey, IsBaseline: p.IsBaseline,
+		LangyTier: opts.LangyTier,
 	}
 	for i, r := range domain.PerWorktreeServices {
 		svc := domain.Service{
@@ -224,8 +229,43 @@ func (o *Orchestrator) Up(ctx context.Context, p UpParams, opts PlanOptions) err
 	if err := o.sup.RunOnce(ctx, "seed", p.LwDir, "pnpm -s run prisma:seed", env); err != nil {
 		o.log.Warn("seed failed (continuing)", zap.Error(err))
 	}
-	o.sup.Supervise(ctx, o.planChildren(st, opts, p.LwDir))
+	// In the container tiers (the sandboxed default and container-unsafe), the
+	// langyagent worker runs on colima rather than the host. Bring the VM up and
+	// ensure its image before planning; on failure, fail closed — skip langy rather
+	// than silently dropping to the unsafe host runner — and tell the user the
+	// explicit opt-in for host mode.
+	langyDockerHost := ""
+	if !opts.ShouldSkipLangyAgent && st.LangyTier.RunsInContainer() {
+		if dh, err := o.prepareLangyContainer(ctx, opts.RepoRoot); err != nil {
+			o.log.Warn("langyagent container unavailable — skipping it (set LANGY_UNSAFE_HOST_ACCESS=1 to run the worker on the host instead)",
+				zap.String("tier", st.LangyTier.String()), zap.Error(err))
+			opts.ShouldSkipLangyAgent = true
+		} else {
+			langyDockerHost = dh
+		}
+	}
+	o.sup.Supervise(ctx, o.planChildren(st, opts, p.LwDir, langyDockerHost))
 	return nil
+}
+
+// prepareLangyContainer brings colima up and ensures the langyagent image exists
+// on it, returning the docker socket the worker container should run against. The
+// image is built only when missing (or when HAVEN_LANGY_REBUILD=1 forces it) — the
+// first build takes minutes, every `up` after is a no-op check.
+func (o *Orchestrator) prepareLangyContainer(ctx context.Context, repoRoot string) (string, error) {
+	if o.container == nil {
+		return "", fmt.Errorf("no container runtime configured")
+	}
+	dockerHost, err := o.container.Ensure(ctx)
+	if err != nil {
+		return "", fmt.Errorf("colima (%s): %w", o.container.Profile(), err)
+	}
+	shell := langyImageEnsureShell(langyImage, os.Getenv("HAVEN_LANGY_REBUILD") == "1")
+	fmt.Printf("  langyagent: ensuring container image %s (first build can take a few minutes)…\n", langyImage)
+	if err := o.sup.RunOnce(ctx, "langy-image", repoRoot, shell, []string{"DOCKER_HOST=" + dockerHost}); err != nil {
+		return "", fmt.Errorf("build %s: %w", langyImage, err)
+	}
+	return dockerHost, nil
 }
 
 // UpStub is the verification path: it provisions the stack exactly like Up, then

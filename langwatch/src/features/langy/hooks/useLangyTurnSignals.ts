@@ -25,6 +25,12 @@ export interface LangyTurnSignals {
    * suffix on the progress percent. Null when the turn reports a bare percent.
    */
   segment: { index: number; total: number } | null;
+  /**
+   * The model's reasoning (thinking) for the live turn, accumulated from the
+   * `reasoning` stream. Ephemeral — present only while a reply streams, null
+   * otherwise (it is never persisted or reloaded).
+   */
+  reasoning: string | null;
   /** True while replaying a buffered token tail after a refresh ("Catching up…"). */
   isCatchingUp: boolean;
 }
@@ -49,11 +55,13 @@ export function useLangyTurnSignals(
 ): LangyTurnSignals {
   const status = useLangyStore((s) => s.turnStatus);
   const progress = useLangyStore((s) => s.turnProgress);
+  const reasoning = useLangyStore((s) => s.turnReasoning);
   return {
     status,
     progress,
     metrics: null,
     segment: null,
+    reasoning,
     isCatchingUp: false,
   };
 }

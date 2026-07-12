@@ -31,6 +31,16 @@ import {
 export interface LangyTurnRecovery {
   /** True while an auto-retry is scheduled — the error card must stay hidden. */
   isRecovering: boolean;
+  /**
+   * Derived SYNCHRONOUSLY during render (not from the timer effect): will this
+   * failure auto-retry? The caller gates the red error card on `!willAutoRecover`
+   * so the card never renders for even a single frame before the effect arms the
+   * timer — the flash that made a recovering turn look failed. `isRecovering`
+   * tracks the same condition, so today they move together; the field is named
+   * for the guard's intent so the panel reads as "don't show the card if we're
+   * about to retry".
+   */
+  willAutoRecover: boolean;
   /** The line to show in the message flow, or null when not recovering. */
   message: string | null;
   /** The attempt about to run (1-based). 0 when not recovering. */
@@ -162,9 +172,28 @@ export function useLangyTurnRecovery({
   // Unmount must never leave a timer holding a stale `regenerate`.
   useEffect(() => clearTimer, [clearTimer]);
 
+  // SYNCHRONOUS: will THIS failure be handled by an automatic retry? Decided from
+  // the same inputs the effect uses but WITHOUT waiting for it to run. `isRecovering`
+  // (below) is timer-driven — true only once the effect has ARMED the retry — so on
+  // the first paint of a fresh auto-retryable failure it is still false, and a panel
+  // that gated the red card on `!isRecovering` alone flashed it for that one frame.
+  // `willAutoRecover` is true from the very first paint, so the panel gates the card
+  // on `!willAutoRecover` and it never renders while a retry is coming. (They differ
+  // only in that brief pre-arm window and after a retry fires — never show the card
+  // in either; that is the whole point.)
+  const willAutoRecover =
+    !!errorKind &&
+    enabled &&
+    canAutoRecover({
+      kind: errorKind,
+      attemptsUsed: attemptsUsedRef.current,
+      sideEffectsObserved,
+    });
+
   if (!pending) {
     return {
       isRecovering: false,
+      willAutoRecover,
       message: null,
       attempt: 0,
       attempts: errorKind ? langyRecoveryPolicy(errorKind).attempts : 0,
@@ -175,6 +204,7 @@ export function useLangyTurnRecovery({
   const policy = langyRecoveryPolicy(pending.kind);
   return {
     isRecovering: true,
+    willAutoRecover,
     message: policy.recoveringMessage,
     attempt: pending.attempt,
     attempts: policy.attempts,

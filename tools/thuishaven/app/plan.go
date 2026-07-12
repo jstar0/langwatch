@@ -2,8 +2,6 @@ package app
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/langwatch/langwatch/tools/thuishaven/domain"
 )
@@ -24,8 +22,18 @@ func goServiceShell(repoRoot, svc string, shouldWatch bool) string {
 // planChildren turns a resolved stack into the supervised process set, layering
 // the overlay env (hostname URLs + ports) onto each child and giving each Go
 // service its SERVER_ADDR.
-func (o *Orchestrator) planChildren(st domain.Stack, opts PlanOptions, lwDir string) []Child {
+func (o *Orchestrator) planChildren(st domain.Stack, opts PlanOptions, lwDir, langyDockerHost string) []Child {
 	base := st.OverlayEnv()
+	// Bun and Node use their own bundled CA roots, NOT the macOS system store, so
+	// the app process and the langy worker's opencode (Bun) subprocess otherwise
+	// reject the portless HTTPS certs on every gateway/control-plane call ("self
+	// signed certificate in certificate chain"). Point them at the portless Local
+	// CA so those runtimes trust the same hostnames curl/Go/the browser already do.
+	// Dev/portless only — production serves real certs, and CACertPath is "" when
+	// the CA is absent, so this appends nothing outside a portless stack.
+	if ca := o.proxy.CACertPath(); ca != "" {
+		base = append(base, "NODE_EXTRA_CA_CERTS="+ca)
+	}
 	port := func(name string) int {
 		for _, s := range st.Services {
 			if s.Name == name {
@@ -82,24 +90,7 @@ func (o *Orchestrator) planChildren(st domain.Stack, opts PlanOptions, lwDir str
 		})
 	}
 	if !opts.ShouldSkipLangyAgent {
-		// langyagent (the cmd/service mono-binary) takes its listen port from PORT,
-		// not SERVER_ADDR (see services/langyagent/config.go) — PORT always wins. Its
-		// sessions/workspace roots default to the in-container /workspace, which is
-		// read-only on a dev host; point them at writable per-slug dirs under haven's
-		// home and create them so the manager boots (session spawn still needs an
-		// `opencode` binary on PATH, but the service itself comes up).
-		laRoot := filepath.Join(o.cfg.Home, "langyagent", st.Slug)
-		_ = os.MkdirAll(filepath.Join(laRoot, "sessions"), 0o755)
-		_ = os.MkdirAll(filepath.Join(laRoot, "workspace"), 0o755)
-		out = append(out, Child{
-			Name: "langyagent", Dir: opts.RepoRoot, Color: palette[6],
-			Shell: goServiceShell(opts.RepoRoot, "langyagent", opts.ShouldGoWatch),
-			Env: append(append([]string{}, base...),
-				fmt.Sprintf("PORT=%d", port("langyagent")),
-				"SESSIONS_ROOT="+filepath.Join(laRoot, "sessions"),
-				"LANGY_WORKSPACE_ROOT="+filepath.Join(laRoot, "workspace"),
-			),
-		})
+		out = append(out, o.langyChild(st, opts, base, port("langyagent"), langyDockerHost))
 	}
 	if opts.ShouldStartWorkers && !opts.ShouldRunWorkersInProcess {
 		out = append(out, Child{

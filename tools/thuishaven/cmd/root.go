@@ -158,7 +158,7 @@ func wire(logger *zap.Logger, isAgent bool) deps {
 	}
 
 	return deps{
-		orch:     app.New(cfg, proxy, store, sup, sys, ch, pg, rds, obs, hyg, sem, logger),
+		orch:     app.New(cfg, proxy, store, sup, sys, ch, pg, rds, obs, hyg, sem, rt, logger),
 		dash:     dashboard.New(store.Stacks, sharedURL),
 		params:   app.UpParams{WorktreeDir: worktree, LwDir: lwDir, Branch: gitBranch(worktree), ExplicitSlug: os.Getenv("LANGWATCH_SLUG"), IsBaseline: os.Getenv("HAVEN_BASELINE") == "1", IsLinkedWorktree: gitIsLinkedWorktree(worktree)},
 		opts:     optionsFromEnv(worktree),
@@ -279,8 +279,16 @@ func optionsFromEnv(repoRoot string) app.PlanOptions {
 		ShouldSkipGateway:         os.Getenv("LANGWATCH_SKIP_AIGATEWAY") == "1",
 		ShouldSkipLangyAgent:      os.Getenv("LANGWATCH_SKIP_LANGYAGENT") == "1",
 		ShouldSeed:                os.Getenv("LANGWATCH_SEED") == "1",
-		IsStub:                    os.Getenv("HAVEN_STUB") == "1",
-		RepoRoot:                  repoRoot,
+		// The langyagent worker's local isolation posture. Default (neither flag) is
+		// the sandboxed, production-like tier: the worker runs in colima with the
+		// per-worker UID sandbox on. LANGY_UNSAFE_CONTAINER relaxes the sandbox inside
+		// the VM; LANGY_UNSAFE_HOST_ACCESS drops the VM and runs it on the host.
+		LangyTier: domain.ResolveLangyTier(
+			envTruthy("LANGY_UNSAFE_CONTAINER"),
+			envTruthy("LANGY_UNSAFE_HOST_ACCESS"),
+		),
+		IsStub:   os.Getenv("HAVEN_STUB") == "1",
+		RepoRoot: repoRoot,
 	}
 }
 
@@ -432,6 +440,13 @@ func hasFlag(args []string, flag string) bool {
 		}
 	}
 	return false
+}
+
+// envTruthy reports whether an env var is set to a common "on" value. Accepts the
+// two spellings haven's flags already use across the codebase ("1" / "true").
+func envTruthy(key string) bool {
+	v := os.Getenv(key)
+	return v == "1" || v == "true"
 }
 
 func envOr(key, def string) string {

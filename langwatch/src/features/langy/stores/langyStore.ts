@@ -196,8 +196,16 @@ interface LangyState {
   turnStatus: string | null;
   /** Latest progress fraction/percentage for the turn (0..1 or 0..100). */
   turnProgress: number | null;
+  /**
+   * The model's reasoning (thinking) for the turn, accumulated from the live
+   * `reasoning` stream. Ephemeral — never persisted, cleared when the turn ends
+   * or a new one starts, so it only ever shows while a reply is streaming.
+   */
+  turnReasoning: string | null;
   setTurnStatus: (status: string | null) => void;
   setTurnProgress: (progress: number | null) => void;
+  /** Append a run of streamed reasoning tokens to the live thinking. */
+  appendTurnReasoning: (text: string) => void;
   /** Clear the live signals — called when a new turn starts. */
   resetTurnSignals: () => void;
 
@@ -231,6 +239,7 @@ const emptyConversationState = () => ({
   activeTurnId: null as string | null,
   turnStatus: null as string | null,
   turnProgress: null as number | null,
+  turnReasoning: null as string | null,
 });
 
 export const useLangyStore = create<LangyState>()(
@@ -357,9 +366,13 @@ export const useLangyStore = create<LangyState>()(
       setActiveTurnId: (activeTurnId) => set({ activeTurnId }),
       turnStatus: null,
       turnProgress: null,
+      turnReasoning: null,
       setTurnStatus: (turnStatus) => set({ turnStatus }),
       setTurnProgress: (turnProgress) => set({ turnProgress }),
-      resetTurnSignals: () => set({ turnStatus: null, turnProgress: null }),
+      appendTurnReasoning: (text) =>
+        set((s) => ({ turnReasoning: (s.turnReasoning ?? "") + text })),
+      resetTurnSignals: () =>
+        set({ turnStatus: null, turnProgress: null, turnReasoning: null }),
 
       devMode: false,
       // Leaving dev mode takes the gallery with it — otherwise a user who

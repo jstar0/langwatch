@@ -201,7 +201,24 @@ describe("LangyTurnService.startConversationTurn", () => {
   });
 
   describe("given a turn already running for the conversation", () => {
-    it("throws LangyTurnInProgressError and releases the reserved permit", async () => {
+    // The busy-guard still throws (asserted below), but the "releases the
+    // RESERVED permit" half is deferred to #24: with the GitHub PR flow gated off
+    // (LANGY_GITHUB_ENABLED = false) no turn carries a github token, so no PR
+    // permit is ever reserved — and a release the impl can't reach can't be
+    // asserted. This un-skips when #24 re-homes the PR flow and permits reserve
+    // again. See LANGY_REWORK_PLAN.md (M3b). The always-true half is kept live:
+    it("throws LangyTurnInProgressError without starting a turn", async () => {
+      (deps.conversations.findByIdVisible as ReturnType<typeof vi.fn>).mockResolvedValue({
+        status: LANGY_CONVERSATION_STATUS.RUNNING,
+      });
+      const svc = LangyTurnService.create(deps);
+      await expect(svc.startConversationTurn(input())).rejects.toBeInstanceOf(
+        LangyTurnInProgressError,
+      );
+      expect(mocks.startTurn).not.toHaveBeenCalled();
+    });
+
+    it.skip("releases the reserved PR permit (pending #24: GitHub flow gated off)", async () => {
       (deps.conversations.findByIdVisible as ReturnType<typeof vi.fn>).mockResolvedValue({
         status: LANGY_CONVERSATION_STATUS.RUNNING,
       });
@@ -210,7 +227,6 @@ describe("LangyTurnService.startConversationTurn", () => {
         LangyTurnInProgressError,
       );
       expect(mocks.releasePermit).toHaveBeenCalledTimes(1);
-      expect(mocks.startTurn).not.toHaveBeenCalled();
     });
   });
 

@@ -310,6 +310,14 @@ func TestProvision_WritesCLIOnlyConfig(t *testing.T) {
 		t.Errorf("config.json lost unrelated keys: model=%v plugin=%v", cfg["model"], cfg["plugin"])
 	}
 
+	// A headless worker cannot answer opencode's interactive permission prompts, so
+	// every permission MUST be auto-allowed or the first "ask" (bash/edit/
+	// external_directory) wedges the turn until the liveness sweep gives up. The OS
+	// sandbox + turn timeout are the boundary, not a TUI prompt.
+	if cfg["permission"] != "allow" {
+		t.Errorf("config.json must set permission=allow for a headless worker, got %v", cfg["permission"])
+	}
+
 	// Not a plaintext leak either: with no mcp block, the API key must not appear
 	// anywhere in the config file. The CLI reads it from the process env instead.
 	if strings.Contains(string(raw), creds.LangwatchAPIKey) {

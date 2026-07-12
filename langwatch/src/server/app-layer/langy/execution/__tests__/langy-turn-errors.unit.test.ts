@@ -5,6 +5,7 @@ import {
   LangyAgentSessionLostError,
   LangyAgentUnavailableError,
   LangyWorkerRestartingError,
+  LangyWorkerStoppedError,
   classifyLangyTurnError,
   langyAgentErrorFromFrame,
   serializeLangyTurnError,
@@ -28,6 +29,24 @@ describe("langyAgentErrorFromFrame", () => {
       expect(langyAgentErrorFromFrame("session-not-found")).toBeInstanceOf(
         LangyAgentSessionLostError,
       );
+    });
+
+    it("accepts the snake_case session_not_found the mono-binary emits", () => {
+      // app.go's PostMessage session-vanished branch emits `session_not_found`;
+      // the classifier historically matched only the hyphenated form.
+      expect(langyAgentErrorFromFrame("session_not_found")).toBeInstanceOf(
+        LangyAgentSessionLostError,
+      );
+    });
+
+    it("maps worker_stopped — and its legacy aliases — onto the worker-stopped final state", () => {
+      // The worker died mid-turn. `worker_stopped` is the deliberate signal;
+      // `agent_error` / `post_error` are the older codes for the same thing.
+      for (const code of ["worker_stopped", "agent_error", "post_error"]) {
+        expect(langyAgentErrorFromFrame(code), code).toBeInstanceOf(
+          LangyWorkerStoppedError,
+        );
+      }
     });
   });
 

@@ -121,6 +121,18 @@ func (a *Agent) Provision(in ProvisionInput) error {
 		"$schema": "https://opencode.ai/config.json",
 		"model":   model,
 		"plugin":  []string{plugin},
+		// Auto-allow every tool permission. opencode's permission model is an
+		// INTERACTIVE prompt for a human at the TUI; a headless worker has no one to
+		// answer it, so any tool whose permission defaults to "ask" (bash, edit,
+		// external_directory, …) wedges the turn the instant it fires — the reply
+		// just sits at "reconnecting" until the liveness sweep declares the worker
+		// stopped. The worker's real boundary is the OS sandbox (per-worker UID,
+		// the egress guard, read-only skills) plus the per-turn timeout, NOT a TUI
+		// prompt, so "allow" is the only correct value here. It also silences the
+		// dev-only "external_directory /*" ask: in a portless/haven stack the session
+		// home lives under the user's ~, which opencode flags as external and asks
+		// about on the very first file touch.
+		"permission": "allow",
 	}
 
 	configPath := filepath.Join(configDir, "config.json")
@@ -339,6 +351,17 @@ func buildWorkerEnv(conversationID, workerHome string, creds domain.Credentials,
 			"NO_PROXY="+noProxy,
 			"no_proxy="+noProxy,
 		)
+	}
+	// NODE_EXTRA_CA_CERTS is forwarded EXPLICITLY rather than left to the
+	// inherited-env filter above: opencode runs on Bun, which trusts only its own
+	// bundled CA roots plus this var — never the macOS system store. In portless
+	// dev haven points it at the portless Local CA (see haven's planChildren) so
+	// the worker's HTTPS calls to the gateway/control-plane hostnames succeed;
+	// without it every model call dies with "self signed certificate in
+	// certificate chain". Dev-only: real deployments serve real certs, so the var
+	// is unset and this contributes nothing.
+	if ca := os.Getenv("NODE_EXTRA_CA_CERTS"); ca != "" {
+		env = append(env, "NODE_EXTRA_CA_CERTS="+ca)
 	}
 	return env
 }

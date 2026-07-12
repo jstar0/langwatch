@@ -40,6 +40,34 @@ Feature: Langy recovers from a failed turn without making the user re-ask
     Then Langy shows the error card immediately
     And Langy does not retry, because a retry would hit the same wall
 
+  # When the worker STOPPED — its process died mid-reply, or the liveness sweep
+  # re-dispatched it and it still never came back — the control plane has already
+  # exhausted its own recovery. Re-driving from the browser only walks into the
+  # same dead worker, which is what produced the flicker the user hated: a card
+  # that flashed, vanished into a silent retry, and came back minutes later. So
+  # "the worker stopped" is a FINAL state with its own specific copy, not an
+  # auto-retry. Nothing was lost — the user's message is on record — so the card
+  # offers a manual "Try again", but Langy does not re-drive on its own.
+  @unit
+  Scenario: The worker stops mid-reply and Langy shows a final, specific error
+    Given Langy is answering a question
+    When the worker stops before finishing and the turn fails
+    Then Langy shows a card that says its worker stopped, specifically
+    And the card offers a manual retry
+    And Langy does not re-drive the turn on its own
+    And the card never flickers away into a silent retry
+
+  # The flicker had a second cause independent of the worker-stopped loop: for the
+  # kinds that DO auto-retry, the red card rendered for a single frame before the
+  # retry timer armed. The card must not appear at all when an automatic retry is
+  # about to run — recovering beats failing from the very first paint.
+  @unit
+  Scenario: An about-to-retry failure never flashes the error card
+    Given a turn failed with a kind Langy auto-retries
+    When the failure first reaches the panel
+    Then the error card does not render, not even for one frame
+    And the calm recovering line is what the user sees
+
   @unit
   Scenario: An unrecognised failure is never retried
     Given the turn fails with a kind Langy does not recognise

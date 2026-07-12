@@ -13,16 +13,22 @@
  *
  * Same root cause both times: the catalogue did not come from the thing the
  * worker actually runs. So this script derives it from the ONE artefact that
- * defines that — the Dockerfile's COPY set:
+ * defines that — the Dockerfile's //go:embed skills tree and the COPYs that
+ * overlay it:
  *
- *     COPY skills/_compiled/native/    /opt/langy-templates/skills/
- *     COPY services/langyagent/skills/ /opt/langy-templates/skills/
+ *     COPY skills/_compiled/native/ ./services/langyagent/internal/assets/skills/
  *
- * The source directories are not hardcoded here. They are READ OUT of
- * `Dockerfile.langyagent` by matching every COPY whose destination is the skills
- * directory the worker symlinks into opencode's discovery path. Add a third COPY
- * and this picks it up with no edit; change the destination and it stops
- * matching, loudly, rather than quietly generating a stale list.
+ * The worker embeds `services/langyagent/internal/assets/skills/` into its
+ * binary. The checked-in tree carries only the dev/test subset (the langy-only
+ * `github` skill); the Dockerfile overlays the FULL compiled public set on top
+ * before `go build`. So the skills the worker gets = that checked-in base dir
+ * PLUS every COPY the Dockerfile lands in it.
+ *
+ * The overlay source directories are not hardcoded here. They are READ OUT of
+ * `Dockerfile.langyagent` by matching every COPY whose destination is the embed
+ * skills dir. Add a second overlay COPY and this picks it up with no edit; change
+ * the destination and it stops matching, loudly, rather than quietly generating a
+ * stale list that offers only the checked-in subset.
  *
  * The name and description come from each skill's own `SKILL.md` front-matter —
  * the same source behind the public skill directory, so the copy in the palette
@@ -46,8 +52,17 @@ const OUT = path.join(
   "langwatch/src/shared/langy/langySkills.generated.json",
 );
 
-/** Where the worker's skills land in the image, and therefore what to match. */
-const SKILLS_DEST = "/opt/langy-templates/skills/";
+/**
+ * The //go:embed skills tree — the worker embeds this whole directory into its
+ * binary, so it is both the checked-in base of the catalogue AND the destination
+ * the Dockerfile overlays the compiled public skills into.
+ */
+const EMBED_SKILLS_DIR = "services/langyagent/internal/assets/skills";
+
+/** Strip a leading `./` and a trailing `/` so Dockerfile dests compare cleanly. */
+function normalizeDest(dest: string): string {
+  return dest.replace(/^\.\//, "").replace(/\/$/, "");
+}
 
 export interface GeneratedSkill {
   /** The opencode skill name — the directory, and what the agent loads. */
@@ -67,15 +82,18 @@ export interface GeneratedSkill {
  * the whole point of the script: the catalogue's inputs are the image's inputs.
  */
 export function skillSourceDirs(dockerfile: string): string[] {
-  const dirs: string[] = [];
+  const overlays: string[] = [];
   for (const line of dockerfile.split("\n")) {
     const m = line.match(/^\s*COPY\s+(\S+)\s+(\S+)\s*$/);
     if (!m) continue;
     const [, src, dest] = m;
-    if (dest !== SKILLS_DEST) continue;
-    dirs.push(src!.replace(/\/$/, ""));
+    if (normalizeDest(dest!) !== EMBED_SKILLS_DIR) continue;
+    overlays.push(src!.replace(/\/$/, ""));
   }
-  return dirs;
+  // The checked-in embed dir is the base (the langy-only `github` skill); the
+  // overlays are copied on top, so they come LAST — last write wins on an id
+  // collision, exactly as the image's layers resolve it.
+  return [EMBED_SKILLS_DIR, ...overlays];
 }
 
 /**
@@ -141,10 +159,15 @@ export function deriveSkills(repoRoot: string): GeneratedSkill[] {
     "utf8",
   );
   const dirs = skillSourceDirs(dockerfile);
-  if (dirs.length === 0) {
+  // dirs[0] is always the checked-in base; anything after it is a Dockerfile
+  // overlay. No overlay means the compiled-skills COPY vanished or its
+  // destination moved — fail loudly rather than silently offering only the
+  // checked-in `github` subset (the exact one-skill-out-of-fourteen regression).
+  if (dirs.length < 2) {
     throw new Error(
-      `Dockerfile.langyagent: no COPY into ${SKILLS_DEST}. Either the image stopped ` +
-        `shipping skills, or the destination moved and this generator is now blind.`,
+      `Dockerfile.langyagent: found no COPY overlaying compiled skills into ` +
+        `${EMBED_SKILLS_DIR}/. Either the image stopped shipping the compiled skill ` +
+        `set, or the COPY destination moved and this generator is now blind.`,
     );
   }
 

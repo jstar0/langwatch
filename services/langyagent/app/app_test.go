@@ -174,26 +174,35 @@ func TestApp_Turn_PostErrorEmitsErrorFrame(t *testing.T) {
 	}
 }
 
-func TestApp_Turn_StreamErrorEmitsErrorFrame(t *testing.T) {
+func TestApp_Turn_StreamErrorEmitsWorkerStoppedFrame(t *testing.T) {
 	worker := &fakeWorker{claimOK: true, streamErr: errors.New("boom-stream")}
 	relay := &fakeRelay{}
 	runTurn(t, newTestApp(&fakePool{worker: worker}, relay), req())
 
-	// The stream error's message rides the error frame; assert both the type and
-	// that the message reached the wire.
-	var sawErr bool
+	// The raw stream error is for the log ONLY — never the wire. The frame carries
+	// the vetted `worker_stopped` code, which the control plane classifies into the
+	// final "Langy's worker stopped" state, and a vetted message that does not leak
+	// the internal error string.
+	var sawWorkerStopped bool
 	for _, f := range relay.stream.emitted {
 		var e struct {
 			Type  string `json:"type"`
 			Error string `json:"error"`
+			Code  string `json:"code"`
 		}
 		_ = json.Unmarshal([]byte(f.JSON()), &e)
-		if e.Type == "error" && e.Error == "boom-stream" {
-			sawErr = true
+		if e.Type == "error" {
+			if e.Code != "worker_stopped" {
+				t.Errorf("stream error frame must carry the worker_stopped code, got %q", e.Code)
+			}
+			if e.Error == "boom-stream" {
+				t.Errorf("raw stream error must not reach the wire, got %q", e.Error)
+			}
+			sawWorkerStopped = true
 		}
 	}
-	if !sawErr {
-		t.Errorf("stream error must push an error frame carrying its message, got %v", frameTypes(relay.stream.emitted))
+	if !sawWorkerStopped {
+		t.Errorf("stream error must push a terminal error frame, got %v", frameTypes(relay.stream.emitted))
 	}
 }
 

@@ -38,6 +38,7 @@ func TestFrameShapes(t *testing.T) {
 		want map[string]any
 	}{
 		{"delta", mk(Delta("hi")), map[string]any{"type": "delta", "text": "hi"}},
+		{"reasoning", mk(Reasoning("let me think")), map[string]any{"type": "reasoning", "text": "let me think"}},
 		{"status", mk(Status("running bash")), map[string]any{"type": "status", "status": "running bash"}},
 		{"heartbeat", mk(Heartbeat()), map[string]any{"type": "heartbeat"}},
 		{"progress-empty", mk(Progress("", nil)), map[string]any{"type": "progress"}},

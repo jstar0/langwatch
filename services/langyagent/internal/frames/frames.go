@@ -55,6 +55,19 @@ func Delta(text string) (Frame, error) {
 	return marshal(deltaFrame{Type: "delta", Text: text})
 }
 
+type reasoningFrame struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// Reasoning is a run of the model's THINKING tokens. Ephemeral, live-edge only:
+// it is shown while it streams and discarded when the turn settles — never a
+// message part, never a durable milestone, never on the final. The control plane
+// relays it on the same ordered, HMAC-signed stream as a delta.
+func Reasoning(text string) (Frame, error) {
+	return marshal(reasoningFrame{Type: "reasoning", Text: text})
+}
+
 type statusFrame struct {
 	Type   string `json:"type"`
 	Status string `json:"status"`

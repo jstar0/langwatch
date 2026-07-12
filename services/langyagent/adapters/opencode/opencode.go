@@ -462,6 +462,21 @@ func textDeltaFromEvent(ev *sseEvent) (string, bool) {
 	return "", false
 }
 
+// reasoningDeltaFromEvent extracts a run of the model's REASONING (thinking)
+// tokens from an already-decoded event, or ok=false when the event is not a
+// reasoning delta. opencode streams reasoning the same way it streams text — a
+// `message.part.delta` — but with properties.field=="reasoning" rather than
+// "text" (see textDeltaFromEvent, which deliberately rejects the reasoning
+// field). Ephemeral: it rides the live edge as a frames.Reasoning and never the
+// durable final. Pure — trivially unit-testable.
+func reasoningDeltaFromEvent(ev *sseEvent) (string, bool) {
+	if ev.Type == "message.part.delta" &&
+		ev.Properties.Field == "reasoning" && ev.Properties.Delta != "" {
+		return ev.Properties.Delta, true
+	}
+	return "", false
+}
+
 // The tool lifecycle is emitted as frames.ToolStart / frames.ToolEnd (the frames
 // union `tool` frame), so the control plane can event-source the call
 // (tool_call_initiated / tool_call_succeeded / tool_call_failed) and stream a
@@ -820,6 +835,16 @@ func StreamSession(ctx context.Context, baseURL, bearerToken, sessionID string, 
 		// behind the tool frames below.
 		if delta, ok := textDeltaFromEvent(&ev); ok {
 			if f, mErr := frames.Delta(delta); mErr == nil {
+				if !emitFrame(f) {
+					return nil // relay push broke.
+				}
+			}
+		}
+		// Reasoning fast-path: the model's thinking rides the same live edge as a
+		// token, ephemerally (never durable). Shown while it streams, discarded on
+		// settle.
+		if reasoning, ok := reasoningDeltaFromEvent(&ev); ok {
+			if f, mErr := frames.Reasoning(reasoning); mErr == nil {
 				if !emitFrame(f) {
 					return nil // relay push broke.
 				}

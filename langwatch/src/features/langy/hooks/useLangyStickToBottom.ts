@@ -6,12 +6,11 @@ import { useReducedMotion } from "~/hooks/useReducedMotion";
  *
  * WHY A ResizeObserver AND NOT AN EFFECT ON `messages`:
  * the old autoscroll was `useEffect(..., [messages, status])`, which assumed
- * every growth of the column passes through `messages`. It doesn't. Stream B's
- * optimistic tokens (ADR-048) live in the Zustand store (`optimisticText`), the
- * granular turn signals (status / progress / metrics) come off
- * `useLangyTurnSignals`, and the capability + activity cards render off tool
- * parts — none of which changed the effect's deps. So the column grew and the
- * scroller never moved, and the answer streamed off the bottom of the panel.
+ * every growth of the column passes through `messages`. It doesn't. The granular
+ * turn signals (status / progress / metrics) come off `useLangyTurnSignals`, and
+ * the capability + activity cards render off tool parts — neither of which
+ * changed the effect's deps. So the column grew and the scroller never moved, and
+ * the answer streamed off the bottom of the panel.
  *
  * Chasing that with a longer dep list is a losing game: the next thing anyone
  * streams in breaks it again. So the trigger is the one thing that is true of

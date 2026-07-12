@@ -32,8 +32,9 @@ describe("KNOWN_LANGY_ERROR_KINDS", () => {
       // landing in `unknown` — a failure we can name exactly, shown to the user
       // as "Something went wrong" plus a trace id.
       "langy_worker_spawn_failed",
-      // The liveness sweep found a turn whose worker is gone.
-      "langy_turn_stalled",
+      // The worker stopped mid-reply and the control plane exhausted its recovery
+      // — a FINAL state, not a client auto-retry.
+      "langy_worker_stopped",
       // Raised from the TOOL STREAM (the agent reached for `gh` with no token),
       // never from the model's prose. It replaced the `[langy:connect-github]`
       // sentinel — see server/app-layer/langy/execution/githubCommand.ts.
@@ -119,6 +120,19 @@ describe("explainLangyError", () => {
       expect(presentation.title).toBe("Langy restarted");
       expect(presentation.description).toContain("send your message again");
       expect(presentation.action?.kind).toBe("retry");
+    });
+  });
+
+  describe("given the worker stopped mid-reply", () => {
+    it("names the worker stopping specifically and offers a manual retry", () => {
+      const presentation = explainLangyError(
+        domain({ kind: "langy_worker_stopped", httpStatus: 503 }),
+      );
+
+      expect(presentation.title).toBe("Langy's worker stopped");
+      expect(presentation.description).toContain("safe");
+      expect(presentation.render).toBe("card");
+      expect(presentation.action).toEqual({ label: "Try again", kind: "retry" });
     });
   });
 

@@ -37,7 +37,7 @@ import { LANGY_LIVENESS } from "~/server/app-layer/langy/streaming/langy.streami
 import type { LangyConversationStateData } from "../projections/langyConversationState.foldProjection";
 import type { LangyConversationProcessingEvent } from "../schemas/events";
 import {
-  LangyTurnStalledError,
+  LangyWorkerStoppedError,
   serializeLangyTurnError,
 } from "~/server/app-layer/langy/execution/langy-turn-errors";
 import {
@@ -133,15 +133,17 @@ export function createAgentTurnLivenessReactor(deps: {
       if (stalledMs > MAX_STALL_MS || !handoff) {
         logger.info(
           { tenantId: context.tenantId, conversationId, turnId: currentTurn, stalledMs },
-          "Langy turn stalled past the retry window — failing",
+          "Langy turn stalled past the retry window — the worker stopped, failing",
         );
         await deps.conversations.failTurn({
           projectId: context.tenantId,
           conversationId,
           turnId: currentTurn,
-          // Serialized: `LastError` is rendered on history load, so it carries a
-          // vetted domain error, never prose.
-          error: serializeLangyTurnError(new LangyTurnStalledError()),
+          // The sweep re-dispatched across the whole grace budget and the worker
+          // never came back: it has STOPPED. A terminal kind (no client auto-retry
+          // into the same dead worker). Serialized because `LastError` is rendered
+          // on history load, so it carries a vetted domain error, never prose.
+          error: serializeLangyTurnError(new LangyWorkerStoppedError()),
         });
         return;
       }

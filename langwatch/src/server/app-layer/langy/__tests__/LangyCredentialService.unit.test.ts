@@ -53,6 +53,8 @@ vi.mock("../langyApiKey", () => ({
 import {
   LangyCredentialResolutionError,
   LangyCredentialService,
+  resolveWorkerCallbackUrl,
+  resolveWorkerGatewayBaseUrl,
 } from "../LangyCredentialService";
 
 // Every getOrProvision call now takes the requesting user's session (the mint
@@ -89,6 +91,11 @@ beforeEach(() => {
     apiKeyId: "key-1",
   });
   process.env.LANGWATCH_API_URL = "https://api.langwatch.test";
+  // The endpoint prefers LANGWATCH_ENDPOINT over LANGWATCH_API_URL; clear it so
+  // the default cases below exercise the LANGWATCH_API_URL fallback path
+  // deterministically (same inherited-shell leak rationale as
+  // LW_GATEWAY_PUBLIC_URL just below).
+  delete process.env.LANGWATCH_ENDPOINT;
   process.env.LW_GATEWAY_BASE_URL = "http://gateway.test:5563/v1";
   // Clear LW_GATEWAY_PUBLIC_URL so it doesn't leak in from the developer's
   // shell (`pnpm dev` setups pre-source .env to dodge the start.sh defaulting
@@ -96,6 +103,11 @@ beforeEach(() => {
   // layout). The credential service prefers PUBLIC over BASE, so an inherited
   // value would shadow whatever the test pins via LW_GATEWAY_BASE_URL above.
   delete process.env.LW_GATEWAY_PUBLIC_URL;
+  // The containerized-worker overrides win over both origins above (they point a
+  // colima worker at host.docker.internal). Clear them so a value inherited from
+  // the developer's shell / .env can't shadow the endpoints these tests pin.
+  delete process.env.LANGY_WORKER_CALLBACK_URL;
+  delete process.env.LANGY_WORKER_GATEWAY_URL;
 });
 
 describe("LangyCredentialService", () => {
@@ -123,6 +135,33 @@ describe("LangyCredentialService", () => {
         expect(creds.gatewayBaseUrl).toBe("http://gateway.test:5563/v1");
         expect(vkCreate).not.toHaveBeenCalled();
         expect(prisma.projectSecret.create).not.toHaveBeenCalled();
+      });
+
+      it("prefers LANGWATCH_ENDPOINT (the stable origin) over LANGWATCH_API_URL for the worker callback", async () => {
+        // The worker dials credentials.langwatchEndpoint for the relay push, the
+        // durable finalize, and its MCP server. Under portless LANGWATCH_API_URL
+        // is a raw, haven-assigned loopback port the worker process cannot reach,
+        // so the stable LANGWATCH_ENDPOINT hostname must win — otherwise the relay
+        // is silently disabled and the turn stalls with no live edge and no error.
+        process.env.LANGWATCH_ENDPOINT = "https://app.stack.langwatch.localhost";
+        const prisma = makePrisma({
+          projectSecret: {
+            findFirst: vi
+              .fn()
+              .mockResolvedValue({ encryptedValue: "enc:lw_vk_live_stored" }),
+            create: vi.fn().mockResolvedValue({}),
+          },
+        });
+        const svc = new LangyCredentialService(prisma);
+
+        const creds = await svc.getOrProvision({
+          projectId: "p1",
+          session: SESSION,
+        });
+
+        expect(creds.langwatchEndpoint).toBe(
+          "https://app.stack.langwatch.localhost",
+        );
       });
 
       it("appends /v1 when LW_GATEWAY_BASE_URL lacks it (the dev-cluster bug)", async () => {
@@ -578,6 +617,71 @@ describe("LangyCredentialService", () => {
         ).rejects.toThrow();
         expect(update).not.toHaveBeenCalled();
       });
+    });
+  });
+});
+
+describe("resolveWorkerCallbackUrl", () => {
+  describe("given the containerized-worker override is set", () => {
+    it("prefers LANGY_WORKER_CALLBACK_URL over the control-plane origins", () => {
+      const url = resolveWorkerCallbackUrl({
+        LANGY_WORKER_CALLBACK_URL: "http://host.docker.internal:41001",
+        LANGWATCH_ENDPOINT: "https://app.slug.langwatch.localhost",
+        LANGWATCH_API_URL: "http://127.0.0.1:41001",
+      });
+      expect(url).toBe("http://host.docker.internal:41001");
+    });
+  });
+
+  describe("given no override (the host tier)", () => {
+    it("uses LANGWATCH_ENDPOINT", () => {
+      expect(
+        resolveWorkerCallbackUrl({
+          LANGWATCH_ENDPOINT: "https://app.slug.langwatch.localhost",
+          LANGWATCH_API_URL: "http://127.0.0.1:41001",
+        }),
+      ).toBe("https://app.slug.langwatch.localhost");
+    });
+
+    it("falls back to LANGWATCH_API_URL when the endpoint is absent", () => {
+      expect(
+        resolveWorkerCallbackUrl({ LANGWATCH_API_URL: "http://127.0.0.1:41001" }),
+      ).toBe("http://127.0.0.1:41001");
+    });
+
+    it("returns undefined when nothing is configured", () => {
+      expect(resolveWorkerCallbackUrl({})).toBeUndefined();
+    });
+  });
+});
+
+describe("resolveWorkerGatewayBaseUrl", () => {
+  describe("given the containerized-worker override is set", () => {
+    it("prefers LANGY_WORKER_GATEWAY_URL over the gateway envs", () => {
+      const url = resolveWorkerGatewayBaseUrl({
+        LANGY_WORKER_GATEWAY_URL: "http://host.docker.internal:45000",
+        LW_GATEWAY_PUBLIC_URL: "https://gateway.slug.langwatch.localhost",
+        LW_GATEWAY_BASE_URL: "http://127.0.0.1:45000",
+      });
+      expect(url).toBe("http://host.docker.internal:45000");
+    });
+  });
+
+  describe("given no override (the host tier)", () => {
+    it("uses LW_GATEWAY_PUBLIC_URL, then LW_GATEWAY_BASE_URL", () => {
+      expect(
+        resolveWorkerGatewayBaseUrl({
+          LW_GATEWAY_PUBLIC_URL: "https://gateway.slug.langwatch.localhost",
+          LW_GATEWAY_BASE_URL: "http://127.0.0.1:45000",
+        }),
+      ).toBe("https://gateway.slug.langwatch.localhost");
+      expect(
+        resolveWorkerGatewayBaseUrl({ LW_GATEWAY_BASE_URL: "http://127.0.0.1:45000" }),
+      ).toBe("http://127.0.0.1:45000");
+    });
+
+    it("returns undefined when nothing is configured", () => {
+      expect(resolveWorkerGatewayBaseUrl({})).toBeUndefined();
     });
   });
 });

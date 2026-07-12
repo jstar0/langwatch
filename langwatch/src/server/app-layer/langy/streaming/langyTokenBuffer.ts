@@ -27,6 +27,7 @@ import { LANGY_STREAM, LANGY_STREAMING, LANGY_LIVENESS } from "./langy.streaming
  */
 export type LangyStreamEntry =
   | { type: "delta"; text: string }
+  | { type: "reasoning"; text: string }
   | { type: "status"; status: string }
   | { type: "progress"; message?: string; progress?: number }
   | { type: "milestone"; kind: string; detail?: string }
@@ -200,6 +201,25 @@ export class LangyTokenBuffer {
     status: string;
   }): Promise<void> {
     await this.append(conversationId, turnId, { type: "status", status });
+  }
+
+  /**
+   * Ephemeral run of the model's reasoning (thinking). Live edge ONLY — it is
+   * never flushed to the durable final and never survives a reload; the browser
+   * shows it while it streams and drops it when the turn settles. Appended raw per
+   * frame (not chunked like tokens): the worker's reasoning deltas are already
+   * coarse, and STREAM_MAXLEN bounds the buffer either way.
+   */
+  async appendReasoning({
+    conversationId,
+    turnId,
+    text,
+  }: {
+    conversationId: string;
+    turnId: string;
+    text: string;
+  }): Promise<void> {
+    await this.append(conversationId, turnId, { type: "reasoning", text });
   }
 
   /** Ephemeral "sub update" — how far through a subtask the agent is. */

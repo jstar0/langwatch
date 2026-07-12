@@ -246,8 +246,13 @@ func (a *App) driveTurn(ctx context.Context, req ChatRequest, worker Worker) {
 		a.finalizeCompletedTurn(ctx, req, sink)
 		a.turnObserved(ctx, start, "handoff", req.Intent)
 	case streamErr != nil:
+		// The worker's event stream died before the turn finished — the opencode
+		// subprocess crashed, was OOM-killed, or the connection dropped. The raw
+		// error is for the log only; the control plane classifies the vetted
+		// `worker_stopped` code into a final "Langy's worker stopped" state (never
+		// the raw prose, and never a client auto-retry into the dead worker).
 		clog.Get(ctx).Warn("stream events ended with error", zap.Error(streamErr))
-		emitError(ctx, sink, streamErr.Error(), "agent_error")
+		emitError(ctx, sink, "the worker stopped before finishing", "worker_stopped")
 		a.turnObserved(ctx, start, "stream-error", req.Intent)
 	default:
 		emitFinal(ctx, sink)

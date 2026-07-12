@@ -20,6 +20,10 @@
  */
 import { verifyFrame } from "./langyFrameAuth";
 import {
+  langyAgentErrorFromFrame,
+  serializeLangyTurnError,
+} from "../execution/langy-turn-errors";
+import {
   langyFrameEnvelopeSchema,
   langyRelayFrameSchema,
   type LangyFrameEnvelope,
@@ -29,6 +33,7 @@ import {
 /** The slice of the token buffer the relay writes (the live edge). */
 export interface LangyRelayBuffer {
   appendChunk(a: { conversationId: string; turnId: string; text: string }): Promise<void>;
+  appendReasoning(a: { conversationId: string; turnId: string; text: string }): Promise<void>;
   appendStatus(a: { conversationId: string; turnId: string; status: string }): Promise<void>;
   appendProgress(a: {
     conversationId: string;
@@ -211,6 +216,13 @@ export class LangyTurnRelay {
         await this.deps.buffer.appendChunk({ ...at, text: frame.text });
         return { status: "applied" };
 
+      case "reasoning":
+        // Ephemeral thinking tokens — live edge only, never durable. Same live
+        // channel as status/progress; the browser shows them while they stream
+        // and drops them on settle (no fold ingest, no message part).
+        await this.deps.buffer.appendReasoning({ ...at, text: frame.text });
+        return { status: "applied" };
+
       case "status":
         await this.deps.buffer.appendStatus({ ...at, status: frame.status });
         return { status: "applied" };
@@ -254,7 +266,18 @@ export class LangyTurnRelay {
         return { status: "terminal" };
 
       case "error":
-        await this.deps.buffer.markError({ ...at, error: frame.error });
+        // The LIVE edge must carry the SAME classified, serialized domain error
+        // the durable path records — not the raw frame message. The browser reads
+        // the error off the stream as a JSON domain error (readLangyStreamError);
+        // a raw string parses as null and collapses every named failure into the
+        // generic "Something went wrong". Classify by the vetted `code` (never the
+        // prose), the same mapping ingestAgentTurnResult applies to the fold.
+        await this.deps.buffer.markError({
+          ...at,
+          error: serializeLangyTurnError(
+            langyAgentErrorFromFrame(frame.code ?? frame.error),
+          ),
+        });
         await this.deps.conversations.ingestAgentTurnResult({
           projectId,
           conversationId,

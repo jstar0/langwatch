@@ -46,6 +46,11 @@ type PlanOptions struct {
 	ShouldSkipGateway         bool
 	ShouldSkipLangyAgent      bool
 	ShouldSeed                bool
-	IsStub                    bool // verification: echo servers instead of the real apps
-	RepoRoot                  string
+	// LangyTier is the local isolation posture for the langyagent worker, resolved
+	// from LANGY_UNSAFE_CONTAINER / LANGY_UNSAFE_HOST_ACCESS. The zero value is the
+	// sandboxed (production-like) default: the worker runs in colima with the
+	// per-worker UID sandbox on.
+	LangyTier domain.LangyTier
+	IsStub    bool // verification: echo servers instead of the real apps
+	RepoRoot  string
 }

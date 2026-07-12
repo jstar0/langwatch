@@ -24,6 +24,7 @@ const IDENTITY = {
 function fakeBuffer() {
   return {
     appendChunk: vi.fn(async () => {}),
+    appendReasoning: vi.fn(async () => {}),
     appendStatus: vi.fn(async () => {}),
     appendProgress: vi.fn(async () => {}),
     appendMilestone: vi.fn(async () => {}),
@@ -76,6 +77,22 @@ describe("LangyTurnRelay", () => {
         turnId: "turn-1",
         text: "hello",
       });
+      expect(conversations.ingestAgentTurnResult).not.toHaveBeenCalled();
+    });
+
+    it("appends reasoning to the live buffer only — never durable", async () => {
+      const { relay, buffer, conversations } = makeRelay();
+      const out = await relay.handle(
+        frame({ type: "reasoning", text: "let me check the traces" }),
+      );
+
+      expect(out).toEqual({ status: "applied" });
+      expect(buffer.appendReasoning).toHaveBeenCalledWith({
+        conversationId: "conv-1",
+        turnId: "turn-1",
+        text: "let me check the traces",
+      });
+      // Ephemeral: no fold ingest, and it must not touch the durable answer.
       expect(conversations.ingestAgentTurnResult).not.toHaveBeenCalled();
     });
 
@@ -161,20 +178,41 @@ describe("LangyTurnRelay", () => {
       );
     });
 
-    it("marks the stream error and ingests the durable failed result with a vetted code", async () => {
+    it("marks the stream error with the CLASSIFIED domain error, not the raw prose", async () => {
       const { relay, buffer, conversations } = makeRelay();
       const out = await relay.handle(
         frame({ type: "error", error: "Langy is unavailable", code: "at-capacity" }),
       );
       expect(out).toEqual({ status: "terminal" });
-      expect(buffer.markError).toHaveBeenCalledWith({
-        conversationId: "conv-1",
-        turnId: "turn-1",
-        error: "Langy is unavailable",
+      // The live edge must carry the same JSON domain error the browser parses
+      // (readLangyStreamError) — a raw string collapses every named failure into
+      // the generic "Something went wrong". Classified from the vetted `code`.
+      const markErrorArg = (buffer.markError as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0] as { conversationId: string; turnId: string; error: string };
+      expect(markErrorArg.conversationId).toBe("conv-1");
+      expect(markErrorArg.turnId).toBe("turn-1");
+      expect(JSON.parse(markErrorArg.error)).toMatchObject({
+        kind: "langy_agent_at_capacity",
       });
       expect(conversations.ingestAgentTurnResult).toHaveBeenCalledWith(
         expect.objectContaining({ status: "failed", errorCode: "at-capacity" }),
       );
+    });
+
+    it("classifies a worker_stopped frame into the terminal worker-stopped state", async () => {
+      const { relay, buffer } = makeRelay();
+      await relay.handle(
+        frame({
+          type: "error",
+          error: "the worker stopped before finishing",
+          code: "worker_stopped",
+        }),
+      );
+      const markErrorArg = (buffer.markError as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0] as { error: string };
+      expect(JSON.parse(markErrorArg.error)).toMatchObject({
+        kind: "langy_worker_stopped",
+      });
     });
 
     it("ends the stream and persists the resume token on a handoff (ADR-048)", async () => {

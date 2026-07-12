@@ -45,6 +45,25 @@ Feature: Langy dual-stream — a raw token fast-path beside the durable event-so
     Then the turn stream still ends on the terminal event
     And events for another worker's session are still not forwarded
 
+  # Reasoning (the model's thinking) is its own ephemeral stream, shown while the
+  # reply is being worked out and then discarded. It is NOT the answer: it never
+  # joins the durable final, never becomes a message part, and never reloads. The
+  # user sees Langy think, live, and when the turn settles the thinking is gone.
+  @unit
+  Scenario: The manager emits a reasoning frame for a reasoning delta
+    Given the worker's opencode stream produces a reasoning delta for the routed session
+    When the manager forwards the turn
+    Then it writes a reasoning frame carrying the thinking text
+    And a reasoning delta is not treated as an answer token
+
+  @integration
+  Scenario: Reasoning streams to the browser and vanishes when the turn settles
+    Given a turn is running for a conversation I own
+    When the worker streams reasoning while it works
+    Then I see the reasoning appear live while the reply is in flight
+    And the reasoning is never written to the durable answer
+    And the reasoning is cleared when the turn finishes, so it does not reload
+
   # ---------------------------------------------------------------------------
   # Control plane: split at the turn processor, ephemeral pub/sub
   # ---------------------------------------------------------------------------

@@ -45,6 +45,12 @@ export const langyRelayToolCallSchema = z.object({
 export const langyRelayFrameSchema = z.discriminatedUnion("type", [
   /** A buffered run of assistant prose. */
   z.object({ type: z.literal("delta"), text: z.string() }),
+  /**
+   * Ephemeral run of the model's REASONING (thinking) tokens. Live edge ONLY:
+   * relayed while it streams and dropped when the turn settles — never a message
+   * part, never durable, never on the final. Same ordering + HMAC as a delta.
+   */
+  z.object({ type: z.literal("reasoning"), text: z.string() }),
   /** Ephemeral "major update" — which tool/action the agent is picking. */
   z.object({ type: z.literal("status"), status: z.string() }),
   /** Ephemeral "sub update" — how far through a subtask the agent is. */

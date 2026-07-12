@@ -126,6 +126,27 @@ describe("langyRecoveryPolicy", () => {
     });
   });
 
+  describe("when the worker stopped mid-reply", () => {
+    const policy = langyRecoveryPolicy("langy_worker_stopped");
+
+    it("is TERMINAL — the control plane already exhausted its own recovery", () => {
+      // This USED to auto-retry (as langy_turn_stalled), and that was the bug: a
+      // client re-drive walks straight into the same dead worker, so the card
+      // flashed, vanished into a silent retry, and reappeared minutes later. A
+      // terminal policy shows the card once and lets the user decide.
+      expect(policy.disposition).toBe("terminal");
+      expect(policy.retry).toBe(false);
+      expect(policy.attempts).toBe(0);
+      expect(
+        canAutoRecover({
+          kind: policy.kind,
+          attemptsUsed: 0,
+          sideEffectsObserved: false,
+        }),
+      ).toBe(false);
+    });
+  });
+
   describe("when the agent session was lost", () => {
     const policy = langyRecoveryPolicy("langy_agent_session_lost");
 

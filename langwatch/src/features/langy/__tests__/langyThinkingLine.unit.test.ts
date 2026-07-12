@@ -124,16 +124,6 @@ describe("langyThinkingLine", () => {
       expect(line.allowWhimsy).toBe(true);
     });
 
-    it("counts Stream B's optimistic tokens as real generation", () => {
-      const line = langyThinkingLine({
-        messages: [user, assistant([])],
-        elapsedMs: 5_000,
-        optimisticText: "Here",
-      });
-      expect(line.tone).toBe("working");
-      expect(line.allowWhimsy).toBe(true);
-    });
-
     it("does not go stuck while tokens are still arriving", () => {
       const line = langyThinkingLine({
         messages: [user, assistant([{ type: "text", text: "still writing" }])],

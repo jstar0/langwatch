@@ -161,16 +161,16 @@ const POLICIES: Record<string, LangyRecoveryPolicy> = {
     recoveringMessage: "Taking another run at that…",
   },
 
-  // The worker died mid-turn and the sweep noticed. Same shape as a restart:
-  // nothing was lost, so re-drive it rather than making the user re-ask.
-  langy_turn_stalled: {
-    kind: "langy_turn_stalled",
-    disposition: "auto",
-    retry: true,
-    attempts: SPAWN_RETRY_WAITS.length,
-    delayMs: schedule(SPAWN_RETRY_WAITS),
-    recoveringMessage: "Langy stopped — picking your reply back up…",
-  },
+  // The worker STOPPED and the control plane already exhausted its own recovery:
+  // the liveness sweep re-dispatched the silent turn across its whole grace budget
+  // (or the manager watched the worker's stream die) and it never came back. This
+  // is the one that USED to auto-retry as `langy_turn_stalled`, and that was the
+  // bug — a client re-drive only walks into the same dead worker, so the user got
+  // a card that flashed, vanished into a silent retry, and reappeared minutes
+  // later. It is TERMINAL now: show the card with a manual "Try again", and let
+  // the user decide. (A DEPLOY drain is different — see langy_worker_restarting —
+  // because a fresh pod really is coming, so that one still auto-retries.)
+  langy_worker_stopped: terminal("langy_worker_stopped"),
 
   // A spawn that failed is usually transient (a slow skill install, a readiness
   // timeout under load) and the next one succeeds. Retry it here, bounded — the
@@ -209,6 +209,20 @@ const POLICIES: Record<string, LangyRecoveryPolicy> = {
   // the panel draws the GitHub connect card in the message flow, right where the
   // turn stopped; connecting re-drives the turn so the user never retypes.
   langy_github_not_connected: awaitingUser("langy_github_not_connected"),
+
+  // Turn-START rejections from the control plane (LangyTurnService), not worker
+  // failures: they reach the browser as coded TRPCErrors from the create/continue
+  // mutations. None is auto-retryable — the identical request fails the identical
+  // way until a human changes something (pick a model, fix the egress policy,
+  // grant a scope) or waits (a turn is already streaming). So all are TERMINAL:
+  // the explainer already renders each as a card with the right next action
+  // (configure-model, or none), and the card is where the user acts. Explicit
+  // entries rather than the `?? terminal` fallback so the coverage test pins them.
+  langy_model_not_configured: terminal("langy_model_not_configured"),
+  langy_model_not_allowed: terminal("langy_model_not_allowed"),
+  langy_egress_misconfigured: terminal("langy_egress_misconfigured"),
+  langy_insufficient_scope: terminal("langy_insufficient_scope"),
+  langy_turn_in_progress: terminal("langy_turn_in_progress"),
 
   // Unhandled. We do not know what we would be retrying INTO, so we don't.
   unknown: terminal("unknown"),

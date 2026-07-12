@@ -22,10 +22,10 @@ export interface LangyTurnRequestContext {
   skills?: LangySkillContext[];
 }
 
-/** A live status/progress/milestone signal, routed out-of-band (not a message part). */
+/** A live status/progress/milestone/reasoning signal, routed out-of-band (not a message part). */
 export type LangyTurnSignalEntry = Extract<
   LangyStreamEntry,
-  { type: "status" | "progress" | "milestone" }
+  { type: "status" | "progress" | "milestone" | "reasoning" }
 >;
 
 export interface LangyChatTransportDeps {
@@ -176,6 +176,7 @@ function subscribeTurnStream({
           case "tool":
             enqueueToolChunk(controller, entry);
             return;
+          case "reasoning":
           case "status":
           case "progress":
           case "milestone":

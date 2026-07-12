@@ -94,6 +94,7 @@ import type {
   LangySkillContext,
 } from "~/server/app-layer/langy/langyTurnContext.schema";
 import { LangyError } from "./LangyError";
+import { LangyReasoningStream } from "./LangyReasoningStream";
 import { LangyRecoveringLine } from "./LangyRecoveringLine";
 import { LangyThinkingLine } from "./LangyThinkingLine";
 import { StreamingStatusLine } from "./StreamingStatusLine";
@@ -444,6 +445,10 @@ function LangyPanel({
           if (signal.type === "status") store.setTurnStatus(signal.status);
           else if (signal.type === "progress" && signal.progress !== undefined) {
             store.setTurnProgress(signal.progress);
+          } else if (signal.type === "reasoning") {
+            // Ephemeral thinking — accumulate the run onto the live reasoning so
+            // it reads as one flowing block while it streams.
+            store.appendTurnReasoning(signal.text);
           }
           // milestone entries carry no numeric rollup and have no consumer yet.
         },
@@ -1198,16 +1203,25 @@ function LangyPanel({
                     />
                   ))}
                   {isBusy ? (
-                    hasTurnDetail ? (
-                      <StreamingStatusLine
-                        status={turnSignals.status}
-                        progress={turnSignals.progress}
-                        metrics={turnSignals.metrics}
-                        segment={turnSignals.segment}
-                      />
-                    ) : (
-                      <LangyThinkingLine messages={messages} />
-                    )
+                    <>
+                      {/* The model's live reasoning, above the status/thinking
+                          line. Ephemeral: it streams in, then vanishes when the
+                          turn settles (the store clears it), so it never becomes
+                          part of the durable answer. */}
+                      {turnSignals.reasoning ? (
+                        <LangyReasoningStream reasoning={turnSignals.reasoning} />
+                      ) : null}
+                      {hasTurnDetail ? (
+                        <StreamingStatusLine
+                          status={turnSignals.status}
+                          progress={turnSignals.progress}
+                          metrics={turnSignals.metrics}
+                          segment={turnSignals.segment}
+                        />
+                      ) : (
+                        <LangyThinkingLine messages={messages} />
+                      )}
+                    </>
                   ) : null}
                   {/* Recovering beats failing. While the policy has a retry
                     pending, the turn is — as far as the user is concerned —
@@ -1228,7 +1242,12 @@ function LangyPanel({
                       organizationId={organizationId}
                       onConnected={onGithubConnected}
                     />
-                  ) : turnError ? (
+                  ) : turnError && !recovery.willAutoRecover ? (
+                    // `!willAutoRecover` is belt-and-braces with the recovering
+                    // branch above: it pins the card OUT the moment a failure is
+                    // known to be auto-retryable, so it cannot flash for a frame
+                    // before the retry timer arms — recovering beats failing from
+                    // the very first paint.
                     <LangyError
                       presentation={turnError}
                       onAction={onErrorAction}

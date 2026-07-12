@@ -73,7 +73,9 @@ export const KNOWN_LANGY_ERROR_KINDS = [
   "langy_turn_timeout",
   "langy_worker_restarting",
   "langy_worker_spawn_failed",
-  "langy_turn_stalled",
+  // The worker stopped mid-reply and the control plane exhausted its own recovery
+  // — a FINAL state, not a client auto-retry. See langyRecoveryPolicy.ts.
+  "langy_worker_stopped",
   // NOT a failure — an unmet prerequisite. See the `suppress` case below.
   "langy_github_not_connected",
   // Turn-START rejections from the control plane (app-layer LangyTurnService,
@@ -242,14 +244,18 @@ export function explainLangyError(
         ...debug,
       };
 
-    case "langy_turn_stalled":
-      // Found by the liveness sweep, not by the turn — the pod died mid-reply.
-      // The user's message is safely on record, so this is a retry, not a loss.
+    case "langy_worker_stopped":
+      // The worker stopped mid-reply (its process died, or the liveness sweep
+      // re-dispatched it and it never came back). A FINAL state: the control plane
+      // already exhausted its recovery, so this offers a manual "Try again" but is
+      // never auto-retried — re-driving would only walk into the same dead worker,
+      // which is exactly the flicker this replaced. Nothing was lost: the user's
+      // message is on record, so retrying is safe, it is just their call.
       return {
         kind: domain.kind,
-        title: "Langy stopped mid-reply",
+        title: "Langy's worker stopped",
         description:
-          "Langy stopped before it finished. Nothing was lost — try again.",
+          "Langy's worker stopped before it could finish. Nothing you did is wrong and your message is safe — try again.",
         render: "card",
         action: { label: "Try again", kind: "retry" },
         ...debug,

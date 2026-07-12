@@ -56,6 +56,47 @@ export function ensureGatewayV1BaseUrl(baseUrl: string): string {
 }
 
 /**
+ * The origin the Langy worker calls back on — the relay frame push, the durable
+ * finalize, the revoke, AND the MCP server's LANGWATCH_ENDPOINT all dial this.
+ *
+ * Normally the stable control-plane origin: LANGWATCH_ENDPOINT (the portless
+ * hostname under haven, the public/self-hosted URL in prod), with LANGWATCH_API_URL
+ * the plain-`pnpm dev` fallback.
+ *
+ * `LANGY_WORKER_CALLBACK_URL` overrides both and wins when set. haven sets it when
+ * the worker runs INSIDE a container (the sandboxed / container-unsafe tiers): from
+ * there 127.0.0.1 and the `.localhost` hostnames resolve to the container itself,
+ * not the developer's host, so haven points this at a `host.docker.internal` address
+ * (raw port, no portless HTTPS/CA) that reaches back to the host. On the host tier
+ * it is unset and the normal origins apply.
+ */
+export function resolveWorkerCallbackUrl(
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  return (
+    env.LANGY_WORKER_CALLBACK_URL ??
+    env.LANGWATCH_ENDPOINT ??
+    env.LANGWATCH_API_URL
+  );
+}
+
+/**
+ * The AI gateway base URL opencode dials (handed to it as OPENAI_BASE_URL). Same
+ * container caveat as {@link resolveWorkerCallbackUrl}: `LANGY_WORKER_GATEWAY_URL`
+ * (a `host.docker.internal` address haven injects for a containerized worker) wins
+ * when present; otherwise the usual LW_GATEWAY_PUBLIC_URL / LW_GATEWAY_BASE_URL.
+ */
+export function resolveWorkerGatewayBaseUrl(
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  return (
+    env.LANGY_WORKER_GATEWAY_URL ??
+    env.LW_GATEWAY_PUBLIC_URL ??
+    env.LW_GATEWAY_BASE_URL
+  );
+}
+
+/**
  * Thrown when credential resolution can't complete — missing project,
  * missing provider credential, missing env config. A `DomainError` (kind
  * `langy_credential_resolution`, httpStatus 409) so it serialises uniformly
@@ -182,12 +223,15 @@ export class LangyCredentialService {
       );
     }
 
-    const langwatchEndpoint = process.env.LANGWATCH_API_URL;
-    const gatewayBaseUrl =
-      process.env.LW_GATEWAY_PUBLIC_URL ?? process.env.LW_GATEWAY_BASE_URL;
+    // The worker's callback origin + gateway. Both prefer the container-worker
+    // overrides (LANGY_WORKER_CALLBACK_URL / LANGY_WORKER_GATEWAY_URL) that haven
+    // injects when the worker runs inside colima, then fall back to the stable
+    // control-plane origins. See resolveWorkerCallbackUrl / resolveWorkerGatewayBaseUrl.
+    const langwatchEndpoint = resolveWorkerCallbackUrl();
+    const gatewayBaseUrl = resolveWorkerGatewayBaseUrl();
     if (!langwatchEndpoint) {
       throw new LangyCredentialResolutionError(
-        "LANGWATCH_API_URL is not configured on the control plane.",
+        "Neither LANGWATCH_ENDPOINT nor LANGWATCH_API_URL is configured on the control plane.",
       );
     }
     if (!gatewayBaseUrl) {

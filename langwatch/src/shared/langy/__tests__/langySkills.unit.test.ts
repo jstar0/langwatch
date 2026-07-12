@@ -36,13 +36,13 @@ describe("given the Langy skill catalogue", () => {
         "utf8",
       );
 
-      // The union the Dockerfile assembles into /opt/langy-templates/skills/ —
-      // which the worker then symlinks into opencode's discovery path. Both, or
-      // the catalogue is only telling half the truth (which is how it came to
-      // list one skill out of fourteen).
+      // The //go:embed skills tree the worker ships: the checked-in base dir
+      // (the langy-only `github` skill) FIRST, then every compiled-skill overlay
+      // the Dockerfile COPYs on top. Both, or the catalogue is only telling half
+      // the truth (which is how it came to list one skill out of fourteen).
       expect(skillSourceDirs(dockerfile)).toEqual([
+        "services/langyagent/internal/assets/skills",
         "skills/_compiled/native",
-        "app-layer/langyagent/skills",
       ]);
     });
   });

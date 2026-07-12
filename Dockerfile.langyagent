@@ -113,6 +113,24 @@ COPY typescript-sdk ./typescript-sdk
 WORKDIR /src/typescript-sdk
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
+# The CLI imports types GENERATED from the platform source: copy-types.sh copies
+# the Zod-first modules out of langwatch/ + langevals/ and derives
+# default-prompt-model.generated.ts from llmModels.json, and the OpenAPI client is
+# generated from the app's OpenAPI json. Those sources live OUTSIDE typescript-sdk/
+# and the install ran with --ignore-scripts, so the generated tree is absent and
+# the Bun compile fails to resolve `internal/generated/*`. Bring in exactly the
+# files the generators read (at the ../langwatch, ../langevals paths copy-types.sh
+# expects relative to /src/typescript-sdk), then run the generators. These are
+# written INTO the image, so .dockerignore's `*.generated.*` filter (a host→context
+# rule) does not strip them.
+COPY langwatch/src/server/tracer/types.ts             /src/langwatch/src/server/tracer/types.ts
+COPY langwatch/src/server/filters/types.ts            /src/langwatch/src/server/filters/types.ts
+COPY langwatch/src/server/evaluations/types.ts        /src/langwatch/src/server/evaluations/types.ts
+COPY langwatch/src/server/modelProviders/llmModels.json /src/langwatch/src/server/modelProviders/llmModels.json
+COPY langwatch/src/app/api/openapiLangWatch.json      /src/langwatch/src/app/api/openapiLangWatch.json
+COPY langevals/ts-integration/evaluators.generated.ts /src/langevals/ts-integration/evaluators.generated.ts
+RUN pnpm run prepare
+
 # BuildKit fills TARGETARCH from the target platform. Map it to Bun's target
 # triple so `--platform linux/arm64` (Graviton/gVisor) produces an arm64 binary
 # rather than silently emitting the builder's native arch — the same trap the Go

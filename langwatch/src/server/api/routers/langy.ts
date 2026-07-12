@@ -10,10 +10,7 @@ import type {
 import { isLangyConversationUpdateVisibleToUser } from "~/server/app-layer/langy/langyConversationUpdateVisibility";
 import { trackServerEvent } from "~/server/posthog";
 import { connection } from "~/server/redis";
-import {
-  createLangyTokenBuffer,
-  type LangyStreamEntry,
-} from "~/server/app-layer/langy/streaming/langyTokenBuffer";
+import { createLangyTokenBuffer } from "~/server/app-layer/langy/streaming/langyTokenBuffer";
 import { createLangyTurnAccessStore } from "~/server/app-layer/langy/streaming/langyTurnAccess";
 import { AGENT_CHAT_TIMEOUT_MS } from "~/server/app-layer/langy/execution/langy-turn-errors";
 import type { Session } from "~/server/auth";
@@ -519,7 +516,11 @@ export const langyRouter = createTRPCRouter({
    */
   onTurnStream: langyReadProcedure
     .input(z.object({ conversationId: z.string(), turnId: z.string() }))
-    .subscription(async function* (opts): AsyncGenerator<LangyStreamEntry> {
+    // The yield type is inferred from the buffer's `LangyStreamEntry` entries, so no
+    // explicit `: AsyncGenerator<…>` return annotation is needed. On an input-bearing
+    // subscription tRPC v10 doesn't type `opts.signal` (same as the traces/presence
+    // routers), so it's suppressed where it's read below.
+    .subscription(async function* (opts) {
       const { projectId, conversationId, turnId } = opts.input;
       const userId = opts.ctx.session.user.id;
 
@@ -543,6 +544,7 @@ export const langyRouter = createTRPCRouter({
       const signals: AbortSignal[] = [
         AbortSignal.timeout(AGENT_CHAT_TIMEOUT_MS),
       ];
+      // @ts-expect-error - signal is not typed
       if (opts.signal) signals.push(opts.signal);
       const signal = AbortSignal.any(signals);
 

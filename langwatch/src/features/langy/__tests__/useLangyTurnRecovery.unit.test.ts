@@ -82,6 +82,29 @@ describe("useLangyTurnRecovery", () => {
     });
   });
 
+  describe("when an auto-retryable failure first arrives", () => {
+    it("reports willAutoRecover on the very first render, before the timer arms — so the card never flashes", () => {
+      // The flicker: `isRecovering` is timer-driven, so on the first paint of a
+      // fresh failure it is still false; a panel gating the red card on
+      // `!isRecovering` alone rendered it for that one frame before the retry
+      // armed. `willAutoRecover` is synchronous, so the panel can hold the card
+      // out from the very first frame.
+      const { result } = setup({});
+      expect(result.current.willAutoRecover).toBe(true);
+    });
+
+    it("does not report willAutoRecover for a terminal worker-stopped failure", () => {
+      const { result } = setup({ errorKind: "langy_worker_stopped" });
+      expect(result.current.willAutoRecover).toBe(false);
+      expect(result.current.isRecovering).toBe(false);
+    });
+
+    it("stops reporting willAutoRecover once the turn changed something", () => {
+      const { result } = setup({ sideEffectsObserved: true });
+      expect(result.current.willAutoRecover).toBe(false);
+    });
+  });
+
   describe("when the same error re-renders", () => {
     it("does not re-arm the timer — one failure, one retry", () => {
       const errorId = { id: 1 };

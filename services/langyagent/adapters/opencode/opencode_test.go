@@ -307,6 +307,31 @@ func TestTextDeltaFromEvent_LegacyTextShape(t *testing.T) {
 	}
 }
 
+func TestReasoningDeltaFromEvent_MessagePartDelta(t *testing.T) {
+	// opencode streams reasoning as a message.part.delta with field=="reasoning"
+	// — the SAME shape the text fast-path rejects (see the non-text case below).
+	ev := decodeSSE(t, `{"type":"message.part.delta","properties":{"sessionID":"s1","field":"reasoning","delta":"weighing options"}}`)
+	got, ok := reasoningDeltaFromEvent(ev)
+	if !ok || got != "weighing options" {
+		t.Errorf("expected reasoning %q ok=true, got %q ok=%v", "weighing options", got, ok)
+	}
+}
+
+func TestReasoningDeltaFromEvent_NonReasoningYieldsNothing(t *testing.T) {
+	// A text delta is NOT reasoning, and an empty reasoning delta is not a frame.
+	cases := []string{
+		`{"type":"message.part.delta","properties":{"field":"text","delta":"hi"}}`,
+		`{"type":"message.part.delta","properties":{"field":"reasoning","delta":""}}`,
+		`{"type":"text","part":{"text":"world"}}`,
+	}
+	for _, raw := range cases {
+		ev := decodeSSE(t, raw)
+		if got, ok := reasoningDeltaFromEvent(ev); ok {
+			t.Errorf("expected no reasoning for %s, got %q", raw, got)
+		}
+	}
+}
+
 func TestTextDeltaFromEvent_NonTextEventsYieldNothing(t *testing.T) {
 	// Tool-call / lifecycle / non-text-field deltas must NOT produce a fast
 	// frame — Stream B is raw answer tokens only.
